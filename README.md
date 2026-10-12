@@ -15,6 +15,33 @@ planned for later phases.
   claimed.
 - Each phase advances only after explicit human approval.
 
+## Work in progress (feature/e1-deepsec-foundation)
+
+This branch is incomplete and is published for review only. It is not ready
+to run.
+
+Present:
+
+- `lab/e1/*.sql`: experiment E1 SQL scripts (preflight, principals, synthetic
+  schema and data, audit policies, end-user identities, data grants, access
+  tests, evidence collection, retain-and-lock, provenance-checked cleanup,
+  active-session guard and target assertion).
+
+Pending, not yet committed:
+
+- `lab/e1/run_e1.sh`: the runner, with SQL*Plus timeout supervision and
+  approval checkpoints bound to source hashes.
+- `lab/e1/RUNBOOK.md` and `lab/e1/e1_local.env.template`.
+- `lab/e1/E1-SOURCES.sha256`: the source manifest.
+- Architecture overview, decision records (including the ADR referenced by
+  `04b_data_grants.sql`), threat model, risk register, the separate MAC
+  experiment design and the list of runtime assumptions.
+- Static validation under `tests/static/`.
+
+The SQL scripts reference the runner and documents listed above. Nothing on
+this branch has been executed against a database, and no security property
+described here has been verified at runtime.
+
 ## Principles
 
 - Synthetic data only. The repository never contains production data,
