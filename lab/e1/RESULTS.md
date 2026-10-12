@@ -123,6 +123,17 @@ was run again after the fixes.
   while others with zero visible rows (`region <> 'NORTH'`) were audited with
   0. The exact rule is not characterized yet.
 
+## Open findings
+
+Recorded for a later investigation. They were not investigated further in
+E1 and they do not change the E1 outcome.
+
+| Id | Finding | Seen in |
+|---|---|---|
+| OF-1 | The rule that makes a SELECT audit record carry return code 2004 is not characterized. Some queries that returned normally were audited with 2004, others with zero visible rows with 0. | U5 |
+| OF-2 | A refused end-user logon (ORA-01045) creates and audits a security context with return code 0, and no failed LOGON record was found in any container although `ORA_LOGIN_LOGOUT` is enabled for failures. | U2 |
+| OF-3 | An UPDATE filtering on a column without SELECT returned 0 rows instead of the documented ORA-41900. | U3 |
+
 ## Not verified by E1
 
 - Bypass by privileged database users, `SET USE DATA GRANTS ONLY` (MAC) and
