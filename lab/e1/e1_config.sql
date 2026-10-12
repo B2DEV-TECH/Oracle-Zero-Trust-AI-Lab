@@ -1,0 +1,14 @@
+-- ============================================================================
+-- E1 Deep Data Security - shared connection settings (no secrets, no host data)
+-- Included only by the scripts that open a TCP session (04b, 05a-05d).
+--
+-- The connection descriptor is NOT stored in the repository. run_e1.sh builds
+-- e1_conn.local.sql from the validated values in e1_local.env and removes it
+-- when the step ends. For a manual run, create e1_conn.local.sql next to this
+-- file with a single line (placeholders shown, use your own listener values):
+--
+--   define dds_conn = "//<db-host>:<listener-port>/<pdb-service>"
+--
+-- e1_conn.local.sql matches *.local.sql and is ignored by Git.
+-- ============================================================================
+@@e1_conn.local.sql

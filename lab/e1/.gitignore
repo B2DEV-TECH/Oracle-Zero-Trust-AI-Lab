@@ -1,0 +1,7 @@
+# E1 Deep Data Security - never track secrets, local settings, measured target,
+# logs or execution state
+secrets/
+*.local.sql
+e1_local.env
+logs/
+state/
