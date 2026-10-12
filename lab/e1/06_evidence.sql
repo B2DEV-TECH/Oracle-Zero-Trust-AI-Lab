@@ -25,6 +25,9 @@ whenever oserror exit failure rollback
 @@e1_target.local.sql
 
 alter session set container = FREEPDB1;
+-- DBMS_OUTPUT state is per container: re-enable it after the switch (verified in
+-- the first E1 run, the PL/SQL output was silently lost without this line)
+set serveroutput on size unlimited
 @@e1_assert_target.sql
 exec dbms_application_info.set_module('E1_LAB', '06_evidence')
 
@@ -157,8 +160,13 @@ begin
         where instr(unified_audit_policies, 'DDS_E1_CONFIG_POL') > 0
           and dbusername = 'DDS_ADMIN' and return_code = 0
           and event_timestamp_utc >= to_timestamp(:b1, :b2)]', v_start, c_ts_fmt));
-  p_check('E11', 'security context created and audited for N, S and X',
-          'DDS_EU_NOACCESS,DDS_EU_NORTH,DDS_EU_SOUTH', f_query(
+  -- E11: verified in the first E1 run (Free 23.26.3): the database also creates
+  --      and audits, with RETURN_CODE 0, a security context for DDS_EU_NOROLE,
+  --      whose logon is then refused with ORA-01045. A successful context record
+  --      is therefore NOT proof of a successful logon. The original expectation
+  --      (N, S and X only) was a documentation hypothesis and failed.
+  p_check('E11', 'security context created and audited for all 4 (NOROLE included)',
+          'DDS_EU_NOACCESS,DDS_EU_NOROLE,DDS_EU_NORTH,DDS_EU_SOUTH', f_query(
     q'[select listagg(distinct coalesce(end_user_name, dbusername), ',')
                 within group (order by coalesce(end_user_name, dbusername))
          from unified_audit_trail
@@ -210,13 +218,21 @@ begin
     q'[select to_char(count(*)) from dba_objects where status = 'INVALID']'));
   -- E18: no user-schema object (ORACLE_MAINTAINED = N) outside the lab allowlist
   --      had DDL since the run start. A false positive is possible if another
-  --      person or application runs DDL during the run (the RUNBOOK asks for a
-  --      quiet window).
+  --      person or application runs DDL during the run (keep a quiet window).
+  --      Verified in the first E1 run: every start of a repeating scheduler job
+  --      sets the job's LAST_DDL_TIME to its LAST_START_DATE, so a JOB whose
+  --      LAST_DDL_TIME matches its last start (2 s tolerance) is a run, not DDL.
+  --      Limitation: real DDL on such a job before its latest run is masked.
   p_check('E18', 'no DDL in a schema outside the lab since the run start', '0', f_query(
     q'[select to_char(count(*)) from dba_objects o
         where o.owner in (select u.username from dba_users u where u.oracle_maintained = 'N')
           and o.owner not in ('DDS_INV_OWNER','DDS_ADMIN','DDS_INV_PARSE')
-          and o.last_ddl_time >= to_date(:b1, 'YYYY-MM-DD HH24:MI:SS')]', v_start_db));
+          and o.last_ddl_time >= to_date(:b1, 'YYYY-MM-DD HH24:MI:SS')
+          and not exists (select 1 from dba_scheduler_jobs j
+                           where o.object_type = 'JOB'
+                             and j.owner = o.owner and j.job_name = o.object_name
+                             and abs(o.last_ddl_time - cast(j.last_start_date as date)) <= 2 / 86400)]',
+    v_start_db));
   -- E19: no user or end user created outside the allowlist; data grants and data
   --      roles that already existed outside the lab keep the count measured by 00
   p_check('E19', 'no new Deep Sec principal or user outside the lab',
@@ -246,6 +262,9 @@ begin
         where instr(unified_audit_policies, 'DDS_E1_CTX_POL') > 0
           and coalesce(end_user_name, dbusername) = 'DDS_EU_NOROLE'
           and event_timestamp_utc >= to_timestamp(:b1, :b2)]', v_start, c_ts_fmt));
+  -- O02: first E1 run returned NULL. The ORA-01045 refusal left no LOGON record
+  --      (and no record with a non-zero return code at all) even with
+  --      ORA_LOGIN_LOGOUT enabled for failures in the PDB.
   p_obs('O02', 'LOGON return codes for DDS_EU_NOROLE', f_query(
     q'[select listagg(distinct to_char(return_code), ',') within group (order by to_char(return_code))
          from unified_audit_trail
@@ -322,6 +341,7 @@ col username    format a18
 col owner       format a24
 col object_name format a32
 col object_type format a20
+col sched_run   format a9
 
 prompt INFO lab audit distribution since the run start
 select unified_audit_policies policies, action_name action, dbusername dbuser,
@@ -347,9 +367,15 @@ select grant_name, privilege, column_name, granted_with_all_columns_except,
  where owner = 'DDS_ADMIN'
  order by grant_name, privilege, column_name;
 
-prompt INFO E18 detail (objects outside the lab with DDL since the start; empty = ok)
+prompt INFO E18 detail (objects outside the lab with DDL since the start; empty = ok;
+prompt INFO SCHED_RUN = Y marks a scheduler job run, not counted by E18)
 select o.owner, o.object_name, o.object_type,
-       to_char(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') last_ddl
+       to_char(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') last_ddl,
+       case when exists (select 1 from dba_scheduler_jobs j
+                          where o.object_type = 'JOB'
+                            and j.owner = o.owner and j.job_name = o.object_name
+                            and abs(o.last_ddl_time - cast(j.last_start_date as date)) <= 2 / 86400)
+            then 'Y' else 'N' end sched_run
   from dba_objects o
  where o.owner in (select u.username from dba_users u where u.oracle_maintained = 'N')
    and o.owner not in ('DDS_INV_OWNER','DDS_ADMIN','DDS_INV_PARSE')
