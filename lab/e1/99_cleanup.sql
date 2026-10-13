@@ -43,6 +43,9 @@ whenever oserror exit failure rollback
 @@e1_target.local.sql
 
 alter session set container = FREEPDB1;
+-- DBMS_OUTPUT state is per container: re-enable it after the switch (verified in
+-- the first E1 run, the PL/SQL output was silently lost without this line)
+set serveroutput on size unlimited
 @@e1_assert_target.sql
 exec dbms_application_info.set_module('E1_LAB', '99_cleanup')
 

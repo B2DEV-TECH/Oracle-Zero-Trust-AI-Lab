@@ -8,39 +8,48 @@ planned for later phases.
 
 ## Status
 
-- Early stage. Lab sources are proposed on feature branches and reviewed
-  through pull requests before they reach `main`.
-- No laboratory step has been executed against a database as part of this
-  repository. No test results, measurements or security guarantees are
-  claimed.
-- Each phase advances only after explicit human approval.
+- Experiment E1 (Deep Data Security foundation) was executed for the first
+  time on 2026-10-12 against a disposable local Oracle Database Free 23.26.3.
+  All access tests and evidence checks passed after two fixes to the
+  evidence script. Results, observed behavior and limitations are in
+  [`lab/e1/RESULTS.md`](lab/e1/RESULTS.md). They come from one run in one
+  environment and are not a general security guarantee.
+- Next phases: E2 (APEX application with external identity and end-user
+  propagation), E3 (APEX AI agents and tools bound to database permissions),
+  E4 (attack scenarios such as prompt injection, unauthorized access and
+  privileged paths).
+- Changes reach `main` only through reviewed pull requests.
 
-## Work in progress (feature/e1-deepsec-foundation)
+## Running E1
 
-This branch is incomplete and is published for review only. It is not ready
-to run.
+E1 needs a database you can discard. The scripts create the lab principals
+`DDS_INV_OWNER`, `DDS_ADMIN`, `DDS_INV_PARSE`, the role `DDS_SESSION_ROLE`,
+the data roles `DDS_DR_*`, the end users `DDS_EU_*`, the table
+`DDS_INV_OWNER.INVOICES` and the audit policies `DDS_E1_*`. They target the
+PDB `FREEPDB1`.
 
-Present:
+1. Copy `lab/e1/*.sql` to a working folder outside the repository and create
+   two local files there (both match `*.local.sql` and are ignored by Git):
+   - `e1_conn.local.sql` with one line:
+     `define dds_conn = "//<db-host>:<listener-port>/<pdb-service>"`
+   - `secrets/e1_secrets.local.sql` with five lines
+     `define dds_admin_pwd = "..."`, `dds_eu_north_pwd`, `dds_eu_south_pwd`,
+     `dds_eu_noaccess_pwd`, `dds_eu_norole_pwd`, each a unique random value
+     made of `E1` and 22 letters or digits (the evidence step searches for
+     that pattern).
+2. With `ORACLE_HOME` and `ORACLE_SID` pointing at the database home, run the
+   steps in order with `sqlplus -L -S <connection> @<script> </dev/null`:
+   `00` to `04a` and `06` as `"/ as sysdba"`; `04b` and `05a` to `05d` with
+   `/nolog` (they connect by themselves). Stop at the first setup step
+   (`00` to `04b`) that does not exit with 0. `00` writes
+   `e1_target.local.sql`, which the later steps need.
+3. Read each test log: every assert prints `PASS` or `FAIL` and a `SUMMARY`
+   line. `05d` exits with 0 and passes when its log shows ORA-01045.
+4. `99_cleanup.sql` removes only the lab objects. The repository does not run
+   it automatically.
 
-- `lab/e1/*.sql`: experiment E1 SQL scripts (preflight, principals, synthetic
-  schema and data, audit policies, end-user identities, data grants, access
-  tests, evidence collection, retain-and-lock, provenance-checked cleanup,
-  active-session guard and target assertion).
-
-Pending, not yet committed:
-
-- `lab/e1/run_e1.sh`: the runner, with SQL*Plus timeout supervision and
-  approval checkpoints bound to source hashes.
-- `lab/e1/RUNBOOK.md` and `lab/e1/e1_local.env.template`.
-- `lab/e1/E1-SOURCES.sha256`: the source manifest.
-- Architecture overview, decision records (including the ADR referenced by
-  `04b_data_grants.sql`), threat model, risk register, the separate MAC
-  experiment design and the list of runtime assumptions.
-- Static validation under `tests/static/`.
-
-The SQL scripts reference the runner and documents listed above. Nothing on
-this branch has been executed against a database, and no security property
-described here has been verified at runtime.
+The SQL comments still mention a runner, a runbook and decision records from
+an earlier plan. That runner was dropped.
 
 ## Principles
 
