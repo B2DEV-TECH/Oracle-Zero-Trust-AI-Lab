@@ -496,6 +496,13 @@ def _g54():
     return bool(audit) and not any(a["intact"] for a in audit)
 
 
+@scenario("G55", BETWEEN, "Mandatory role activation switched off after approval, then release",
+          err(1644, "observation state changed"))
+def _g55():
+    return _changed_after_approval("SET GLOBAL activate_mandatory_roles = OFF;",
+                                   "SET GLOBAL activate_mandatory_roles = ON;")
+
+
 # --------------------------------------------------------------------------
 # Runner
 # --------------------------------------------------------------------------

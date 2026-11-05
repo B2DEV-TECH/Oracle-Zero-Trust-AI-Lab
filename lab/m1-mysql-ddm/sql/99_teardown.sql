@@ -2,6 +2,7 @@
 -- Removes every M1 schema, policy, role and account. Global role settings are
 -- reset to the server defaults the experiments assume.
 SET GLOBAL activate_all_roles_on_login = OFF;
+SET GLOBAL activate_mandatory_roles = ON;
 SET GLOBAL mandatory_roles = '';
 DROP DATABASE IF EXISTS m1_kb_pub;
 DROP DATABASE IF EXISTS m1_ctl;

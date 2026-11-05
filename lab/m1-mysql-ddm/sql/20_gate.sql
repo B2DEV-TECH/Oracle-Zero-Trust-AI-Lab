@@ -147,8 +147,10 @@ END//
 -- Observation state: everything that decides what an identity observes or may
 -- do. Masking policy definitions, which source columns carry a policy, role
 -- grants and default roles, static and dynamic privileges, proxy mappings, the
--- two global role settings, and the definitions of the gate's own triggers and
--- routines. Password hashes and grant timestamps are excluded.
+-- three global role settings, and the definitions of the gate's own triggers
+-- and routines. Password hashes and grant timestamps are excluded.
+-- v2 adds activate_mandatory_roles (default ON), which activates the roles
+-- named in mandatory_roles at login even with activate_all_roles_on_login OFF.
 -- Known gap: the column -> policy binding (which policy a column uses) is only
 -- visible through SHOW CREATE TABLE, which a routine cannot capture. Swapping
 -- a column between two existing policies does not change this hash; the
@@ -157,7 +159,7 @@ CREATE DEFINER = 'm1_gate_def'@'%' FUNCTION m1_ctl.observation_state_hash()
   RETURNS CHAR(64) READS SQL DATA SQL SECURITY DEFINER
 BEGIN
   SET SESSION group_concat_max_len = 16777216;
-  RETURN SHA2(CONCAT_WS('#', 'm1-obs-v1',
+  RETURN SHA2(CONCAT_WS('#', 'm1-obs-v2',
     IFNULL((SELECT GROUP_CONCAT(CONCAT_WS('|', policy_name, HEX(expression), HEX(argument))
                                 ORDER BY policy_name SEPARATOR ';')
               FROM mysql.column_masking_policies), '-'),
@@ -201,6 +203,7 @@ BEGIN
               FROM mysql.proxies_priv), '-'),
     @@GLOBAL.mandatory_roles,
     @@GLOBAL.activate_all_roles_on_login,
+    @@GLOBAL.activate_mandatory_roles,
     IFNULL((SELECT GROUP_CONCAT(CONCAT_WS('|', TRIGGER_SCHEMA, TRIGGER_NAME, EVENT_OBJECT_TABLE,
                                           ACTION_TIMING, EVENT_MANIPULATION, DEFINER,
                                           SHA2(ACTION_STATEMENT, 256))

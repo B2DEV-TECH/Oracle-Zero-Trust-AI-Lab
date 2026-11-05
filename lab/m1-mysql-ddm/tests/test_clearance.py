@@ -16,7 +16,7 @@ def base():
     trig = lambda table, name: {"kind": "trigger", "object": table, "name": name, "definer": "m1_gate_def@%",
                                 "security": "DEFINER"}
     return {
-        "globals": {"mandatory_roles": [], "activate_all_roles_on_login": "0"},
+        "globals": {"mandatory_roles": [], "activate_all_roles_on_login": "0", "activate_mandatory_roles": "1"},
         "anonymous_accounts": [],
         "edges": [["m1_r_unmask@%", P], ["m1_r_unmask@%", "m1_world@%"]],
         "defaults": {P: ["m1_r_unmask@%"], "m1_world@%": ["m1_r_unmask@%"]},
@@ -87,6 +87,19 @@ class ClearanceTest(unittest.TestCase):
         s["globals"]["mandatory_roles"] = ["m1_r_unmask@%"]
         # the agent would hold the unmasking role too, and the gate definer is no longer trusted
         self.assertEqual(failing(s)[0], ["C2", "C3", "C7"])
+
+    def test_mandatory_role_activation(self):
+        # with no mandatory role, activate_mandatory_roles has no effect either way
+        s = base()
+        s["globals"]["activate_mandatory_roles"] = "0"
+        bad, ev = failing(s)
+        self.assertEqual(bad, [])
+        self.assertEqual(ev["checks"]["C2"]["activate_mandatory_roles"], "0")
+        # switched off, a mandatory unmasking role is still granted to every account
+        # (SET ROLE ALL activates it), so nothing is relaxed
+        s["globals"]["mandatory_roles"] = ["m1_r_unmask@%"]
+        self.assertEqual(failing(s)[0], ["C2", "C3", "C7"])
+        self.assertIn("m1_r_unmask@%", clearance.closure(s, clearance.AGENT))
 
     def test_definer_view_over_the_source(self):
         s = base()
@@ -162,6 +175,9 @@ class ClearanceTest(unittest.TestCase):
         other = base()
         other["policies"]["m1_p_risk"][0] = "x"
         self.assertEqual(clearance.compare(base(), other, accounts), ["policies"])
+        other = base()
+        other["globals"]["activate_mandatory_roles"] = "0"
+        self.assertEqual(clearance.compare(base(), other, accounts), ["globals"])
         self.assertEqual(clearance.compare(base(), grant(base(), R, "db|m1_ops|SELECT"), accounts),
                          [f"{R}:privileges"])
 

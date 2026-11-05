@@ -5,8 +5,8 @@ the clearance checks and not by a preflight difference or drift. Every
 scenario is reverted before the next one, and the run stops if the original
 state is not restored.
 
-The restricted builder runs the P1 code (profile_filtered); the last scenario
-gives the privileged builder an administrative privilege and runs the C0 code.
+The restricted builder runs the P1 code (profile_filtered); C12 gives the
+privileged builder an administrative privilege and runs the C0 code.
 Expectations (verdict and the checks that must be flagged) were written before
 the first run; the full set of failing checks is reported as observed.
 
@@ -103,6 +103,13 @@ SCENARIOS = [
              ("GRANT MANAGE_DATA_MASKING_POLICY ON *.* TO 'm1_builder_p'@'%';",),
              ("REVOKE MANAGE_DATA_MASKING_POLICY ON *.* FROM 'm1_builder_p'@'%';",),
              "FAIL", ("W",), builder=BP, pipeline=C0_CODE),
+    # C03 with activate_mandatory_roles OFF: the role is no longer active at
+    # login, but it is still granted to every account (SET ROLE ALL activates
+    # it), so the verdict must not change.
+    Scenario("C13", "Unmasking role made mandatory, with mandatory role activation switched off",
+             ("SET GLOBAL activate_mandatory_roles = OFF;", "SET GLOBAL mandatory_roles = '`m1_r_unmask`@`%`';"),
+             ("SET GLOBAL mandatory_roles = '';", "SET GLOBAL activate_mandatory_roles = ON;"),
+             "INCONCLUSIVE", ("C2", "C3", "C7")),
 ]
 
 

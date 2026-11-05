@@ -11,6 +11,7 @@ only set the scope of a PASS, never grant one):
     C1  roles: granted, latent (granted but not default) and nested roles
         stay within what the agent holds
     C2  global role activation: mandatory_roles empty, activate_all_roles_on_login OFF
+        (activate_mandatory_roles is recorded, not decisive: see evaluate)
     C3  DEFINER objects: no view, routine or trigger reachable by the build
         identity runs as another account that can read the source
     C4  effective identity: one account row, no anonymous account, no proxy,
@@ -86,7 +87,8 @@ def _set_tokens(text: str) -> list[str]:
 
 
 def snapshot(instance: str) -> dict:
-    g = _rows(instance, "SELECT @@GLOBAL.mandatory_roles, @@GLOBAL.activate_all_roles_on_login;", "globals")[0]
+    g = _rows(instance, "SELECT @@GLOBAL.mandatory_roles, @@GLOBAL.activate_all_roles_on_login, "
+                        "@@GLOBAL.activate_mandatory_roles;", "globals")[0]
     mandatory = _parse_roles(g[0])
     edges = [[f"{r[1]}@{r[0]}", f"{r[3]}@{r[2]}"] for r in
              _rows(instance, "SELECT FROM_HOST, FROM_USER, TO_HOST, TO_USER FROM mysql.role_edges;", "role edges")]
@@ -175,7 +177,8 @@ def snapshot(instance: str) -> dict:
         acc["privileges"] = sorted(acc["privileges"])
         acc["proxies"] = sorted(acc["proxies"])
     return {
-        "globals": {"mandatory_roles": mandatory, "activate_all_roles_on_login": g[1]},
+        "globals": {"mandatory_roles": mandatory, "activate_all_roles_on_login": g[1],
+                    "activate_mandatory_roles": g[2]},
         "anonymous_accounts": sorted(u for u in accounts if u.startswith("@")),
         "edges": sorted(edges),
         "defaults": {k: sorted(v) for k, v in sorted(defaults.items()) if k in accounts},
@@ -293,10 +296,15 @@ def evaluate(snap: dict, builder: str, live_facts: dict) -> dict:
                     "latent": sorted(set(granted) - set(defaults)), "closure": sorted(roles),
                     "unmask_reachable": UNMASK_ROLE in roles}
 
+    # activate_mandatory_roles (default ON) activates the mandatory roles at
+    # login. It is recorded but does not decide C2: with no mandatory role it
+    # has no effect, and switching it off leaves a mandatory role granted to
+    # every account, which SET ROLE ALL still activates.
     g = snap["globals"]
     checks["C2"] = {"ok": not g["mandatory_roles"] and str(g["activate_all_roles_on_login"]) in ("0", "OFF"),
                     "mandatory_roles": g["mandatory_roles"],
-                    "activate_all_roles_on_login": g["activate_all_roles_on_login"]}
+                    "activate_all_roles_on_login": g["activate_all_roles_on_login"],
+                    "activate_mandatory_roles": g["activate_mandatory_roles"]}
 
     gate_privs = potential(snap, GATE_DEFINER)
     gate_clean = not _reads_source(gate_privs) and not closure(snap, GATE_DEFINER)

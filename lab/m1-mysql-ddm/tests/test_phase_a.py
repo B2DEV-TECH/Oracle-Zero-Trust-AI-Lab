@@ -36,7 +36,7 @@ class Predictions(unittest.TestCase):
 
     def test_registered_counts(self):
         counts = Counter(p[0] for p in phase_a.PREDICTIONS.values())
-        self.assertEqual(counts, {phase_a.SUCCEEDED: 33, phase_a.MET: 17, phase_a.OTHER: 1,
+        self.assertEqual(counts, {phase_a.SUCCEEDED: 34, phase_a.MET: 17, phase_a.OTHER: 1,
                                   phase_a.NOT_EXECUTABLE: 2, phase_a.NOT_COMPARABLE: 1})
         admin = [sid for sid, p in phase_a.PREDICTIONS.items()
                  if p[0] == phase_a.SUCCEEDED and sid in phase_a.ADMINISTRATOR]
@@ -67,7 +67,7 @@ class Classification(unittest.TestCase):
         gate = {"scenarios": [row(sid, "ERROR 1644", "PASS") for sid in phase_a.PREDICTIONS]}
         gate["scenarios"][0]["result"] = "FAIL"  # G01: suppose the gate had not refused it
         s = phase_a.compare(control, gate)["summary"]
-        self.assertEqual(s["gate_adds"], 32)
+        self.assertEqual(s["gate_adds"], 33)
         self.assertNotIn("G01", s["gate_adds_ids"])
 
 

@@ -75,6 +75,7 @@ PREDICTIONS: dict[str, tuple[str, int | None, str]] = {
     "G50": (MET, None, "known gap: the release goes through with and without the gate"),
     "G51": _GATE, "G52": _GATE, "G53": _GATE,
     "G54": (MET, None, "detective only: the audit finds the truncation; neither deployment prevents it"),
+    "G55": _GATE,
 }
 
 
