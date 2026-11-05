@@ -73,8 +73,10 @@ Three hashes tie the flow together:
   Batch ids and timestamps are excluded, so a shadow replay hashes the same.
 - **Observation state hash** (`m1_ctl.observation_state_hash`): masking
   policy definitions, the source columns' metadata, role grants and default
-  roles, static and dynamic privileges, proxy mappings, the two global role
-  settings and the definitions of the gate's own triggers and routines.
+  roles, static and dynamic privileges, proxy mappings, the three global role
+  settings (`mandatory_roles`, `activate_all_roles_on_login` and
+  `activate_mandatory_roles`; tag `m1-obs-v2`) and the definitions of the
+  gate's own triggers and routines.
   It does not cover which policy each column is bound to (only visible
   through `SHOW CREATE TABLE`); the verifier checks bindings separately.
 - **Code hash**: the pipeline sources plus the identity of the pinned
@@ -132,7 +134,7 @@ changes in any valid twin, it depends on data the agent cannot see.
 | Check | Holds when |
 |---|---|
 | C1 roles | every role the builder could activate (granted, latent, nested or mandatory) is one the agent holds; latent roles are reported |
-| C2 global role activation | `mandatory_roles` empty and `activate_all_roles_on_login` OFF |
+| C2 global role activation | `mandatory_roles` empty and `activate_all_roles_on_login` OFF; `activate_mandatory_roles` is recorded but does not decide it (with no mandatory role it has no effect, and switching it off still leaves a mandatory role granted to every account, which `SET ROLE ALL` activates) |
 | C3 DEFINER objects | no view, routine or trigger reachable by the builder runs as another definer, except the gate's own definer when it holds no role and reads no source |
 | C4 effective identity | one account row for the user name, no anonymous account, no proxy grant, and a live login resolves to the account with no active role |
 | C5 privileges | no global or dynamic privilege and nothing but SELECT and INSERT on objects; every read is also a read the agent has, apart from the builder's own batch rows |

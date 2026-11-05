@@ -1,26 +1,40 @@
 # M1 results
 
-One evidence run on 2026-11-05, from fresh deployments, in one environment.
-Every number below comes from that run's raw results, which stay local
-because they hold identities, hashes and timings of one machine. These are
-observations within the tested scope, not a security guarantee.
+Evidence runs on 2026-11-05, each from fresh deployments, in one
+environment. Every number below comes from the runs' raw results, which stay
+local because they hold identities, hashes and timings of one machine. These
+are observations within the tested scope, not a security guarantee.
+
+| Run | Code | Instances | What it is |
+|---|---|---|---|
+| Run 1 | `c7688b8` | lab and shadow | the original evidence, kept below as recorded |
+| Run 2 | `c7688b8` | a second pair, created for these runs | the same sequence again, to check reproducibility under isolated conditions |
+| Run 2b | `917bb91` | second pair | first run of the phase A control (54 gate negatives) |
+| Run 3 | `4d09c75` | second pair, every M1 object redeployed | the current evidence: full sequence, phase A control, `activate_mandatory_roles` |
+
+For each run, the files under `m1/`, `sql/` and `tests/` that ran match, by
+SHA-256, the files of the commit named in the table. The commit that adds
+this version of the document changes documentation only, so its code is
+Run 3's.
 
 ## Environment
 
 | Item | Value |
 |---|---|
 | Database | MySQL Enterprise Server 26.7.0-commercial, Windows x64 ZIP, component `component_object_policy` |
-| Instances | two on one host (lab and shadow), loopback only, binary logging on |
+| Instances | two on one host (lab and shadow), loopback only, binary logging on; Runs 2, 2b and 3 used a second pair on the same host and version, created for them |
 | OS and runtime | Windows 11, CPython 3.13.15 |
 | Embedder | fastembed 0.9.1, onnxruntime 1.31.1, numpy 2.5.4, tokenizers 0.23.3 (hashed wheels in `requirements.lock`) |
 | Model | `BAAI/bge-small-en-v1.5`, revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, files checked against a SHA-256 manifest, one thread, network sockets blocked |
 | Data | synthetic: 24 suppliers, 72 invoices; masked columns `tax_id` (last four characters visible), `compliance_note` (constant), `risk_score` (0) |
 | Twins | 6 per verification (3 permutation, 3 synthetic), seed 20261113, coverage minimum 0.8 of rows per masked column |
 
-The files under `m1/`, `sql/` and `tests/` that ran match, by SHA-256, the
-files in the commit that adds this document.
+## Run 1: original evidence (`c7688b8`)
 
-## Sequence
+Kept as recorded. Where a later run changes how a passage reads, the later
+section says so: phase A (Run 3) and the C3 flag in C10 (Run 2).
+
+### Sequence
 
 | Step | Outcome |
 |---|---|
@@ -34,7 +48,7 @@ files in the commit that adds this document.
 Expectations were written in the code before the runs; no expectation or
 result was changed afterwards.
 
-## Experiments
+### Experiments
 
 | ID | Question | Builder | Expected | Observed | Published rows |
 |---|---|---|---|---|---|
@@ -80,7 +94,7 @@ What the experiments show, within this scope:
   another row changes that part. Per twin, 0 to 2 cells kept their original
   value for lack of a candidate.
 
-## Clearance negatives
+### Clearance negatives
 
 The restricted builder runs the P1 code under each perturbation; the last
 scenario uses the privileged builder and the C0 code. Each perturbation is
@@ -116,7 +130,7 @@ results keep the full lists. Three of them are worth knowing:
   unmasking role by design, so C1, C4 and C6 fail for it in every run; they
   do not affect its verdict because it is not declared a reader.
 
-## Gate negatives
+### Gate negatives
 
 Each negative attempts one action the gate must refuse (or, for the
 positive controls, one it must allow) and compares the result with the
@@ -150,7 +164,7 @@ does not show that each refused action would succeed without the gate; a
 deployment with the control tables but without the triggers and the release
 procedure would be that stronger control, and it was not run.
 
-## Agent demo
+### Agent demo
 
 `python -m m1 agent` read the latest released batch (the C00 control
 build) as `m1_agent`.
@@ -164,7 +178,7 @@ The first question asks for exactly what is masked. The agent returns
 released profiles that carry no compliance information, because none was
 released.
 
-## Other observations
+### Other observations
 
 - **INCONCLUSIVE takes precedence over FAIL.** In C06 and C07 the write
   surface check failed, but the reader-equivalence check failed first, so the
@@ -178,11 +192,234 @@ released.
   seconds, the experiments about 1.5 minutes and the clearance negatives
   about 3 minutes on this host.
 
+## Run 2: reproduction under isolated conditions (`c7688b8`)
+
+Run 1's lab instance had hosted earlier, unrelated experiments, and C10
+showed that their leftovers can change what the clearance checks flag. Run 2
+repeated Run 1's whole sequence, with the same code, on a second pair of
+instances created for it on the same host, which had never hosted anything
+else.
+
+| Step | Run 1 | Run 2 |
+|---|---|---|
+| Unit tests | 41, OK | 41, OK |
+| Phase A (`--core-only`) | 4 of 54 | 4 of 54, the same four |
+| Phase B | 54 of 54 | 54 of 54 |
+| Experiments | 7 of 7 | 7 of 7 |
+| Clearance negatives | 13 of 13, state restored | 13 of 13, state restored |
+| Agent demo (first question) | 0.643, 0.640, 0.632 | three supplier profiles, same scores |
+
+Every scenario flagged the same set of checks in both runs except C10, which
+flagged C5 only in Run 2: the extra C3 of Run 1 came from the leftover
+DEFINER views, not from M1. The sealed content hashes of C0, P0, P0b, P1 and
+P2 were the same in Runs 1, 2 and 3; PND's differ, as a nondeterministic
+build should.
+
+## Run 3: current evidence (`4d09c75`)
+
+Two commits separate Run 3's code from Run 1's:
+
+- `917bb91` adds the phase A control: a deployment option, a release
+  procedure without checks, and a prediction for every gate negative,
+  written before the control first ran (Run 2b).
+- `4d09c75` adds `activate_mandatory_roles` to what the gate and the
+  verifier observe: the clearance snapshot records it, the observation state
+  hash covers it (tag `m1-obs-v2`), teardown resets it, and gate negative
+  G55 and clearance scenario C13 test it.
+
+The verifier's decision rules, the pipelines, the masking policies and the
+gate's checks are otherwise unchanged.
+
+### Sequence
+
+| Step | Outcome |
+|---|---|
+| Unit tests | 50 tests, OK |
+| Weak phase A: gate negatives without the gate (`--core-only`) | 4 of 55 met, the same four as Run 1 |
+| Phase B: gate negatives with the gate | 55 of 55 met |
+| Phase A control (`--control`, then `phase-a`) | 55 of 55 predictions held; the gate adds a refusal in 34 of 52 comparable scenarios |
+| Experiments on fresh lab and shadow instances | 7 of 7 as expected, same verdicts and published rows as Run 1 |
+| Clearance negatives, same instances | 14 of 14 as expected; lab and shadow state restored |
+| Agent demo (first question) | three supplier profiles, same scores as Run 1 |
+
+The expectations of G55 and C13, and G55's phase A prediction, were written
+in commit `4d09c75` before Run 3.
+
+### Phase A control
+
+The weak phase A of Run 1 removes the gate's tables along with the gate, so
+most negatives cannot even start. The control keeps everything an attempt
+touches and removes only what enforces:
+
+| Kept, as in the gate deployment | Removed |
+|---|---|
+| schemas, quarantine, control and published tables, keys | the 21 gate triggers |
+| accounts, grants, the locked definer account | every check in the release procedure |
+| the four functions (content hashes, observation state hash, identity preconditions) | |
+| the release procedure's name, definer, `SQL SECURITY DEFINER`, transaction and copy into the published table | |
+
+It ran on the second pair of instances, never on Run 1's. The same 55 gate
+negatives run on it, and each result is compared with a prediction written
+before the control first ran and with phase B. Outcome classes:
+
+| Class | Meaning | Count |
+|---|---|---|
+| succeeded | the action the gate refuses goes through | 34 |
+| met | the expectation is met without the gate | 17 |
+| other | refused, by a mechanism other than the expected one | 1 |
+| not executable | cannot run as written without the gate | 2 |
+| not comparable | runs, but its result means nothing without the gate | 1 |
+
+By category:
+
+| Category | Scenarios | With the gate (phase B) | Control: succeeded, refused only with the gate | Control: met | Control: other, not executable, not comparable | Weak phase A (`--core-only`) |
+|---|---|---|---|---|---|---|
+| publish without valid approval | 9 | 9 | 9 | 0 | 0 | 0 |
+| forged verification | 9 | 9 | 5 (1 administrator) | 4 | 0 | 0 |
+| modify a sealed artifact | 7 | 7 | 5 (4 administrator) | 1 | 1 not executable | 0 |
+| change between verification and publication | 5 | 5 | 4 | 0 | 1 not executable | 0 |
+| direct write to published tables | 9 | 9 | 5 (5 administrator) | 3 | 1 other | 3 |
+| separation of duties | 9 | 9 | 3 | 6 | 0 | 1 |
+| identity preconditions | 2 | 2 | 2 | 0 | 0 | 0 |
+| observation state | 1 | 1 | 1 | 0 | 0 | 0 |
+| administrator (trusted computing base) | 2 | 2 | 0 | 2 | 0 | 0 |
+| positive control | 2 | 2 | 0 | 1 | 1 not comparable | 0 |
+| **Total** | **55** | **55** | **34 (10 administrator)** | **17** | **4** | **4** |
+
+Comparable: 52 scenarios, everything except the three below.
+
+- **Not executable (G18, G46).** Both begin with the administrator dropping
+  a gate trigger, which does not exist without the gate (error 1360). G14 is
+  the comparable administrator edit.
+- **Not comparable (G40).** This positive control checks that the seal
+  carries the hash a gate trigger computes. Without the gate the seal has
+  none, which says nothing about a refusal.
+
+What each comparable result shows:
+
+- **The gate adds a refusal in 34 scenarios.** Each went through on the
+  control and was refused with error 1644 in phase B, so the refusal is the
+  gate's and not the result of privileges, the account lock or the keys. In
+  24 the actor is not the administrator: approval or release without a
+  valid PASS behind it (9), invalid PASS records by the verifier account (4),
+  a chunk added after the seal (1), role, policy and role activation
+  changes between approval and release (4, G55 among them), a builder
+  writing into or sealing another builder's batch and the seal of an empty
+  batch (3), an anonymous account or a proxy mapping (2) and a grant change
+  during a build (1). In 10 the actor is the administrator, who
+  can drop the triggers (G18 does, in phase B), so there the gate is a
+  guardrail, not a boundary.
+- **17 are met without the gate.** Plain privileges refuse 11 (error 1142)
+  and the EXECUTE grant on the release procedure 2 (error 1370); the locked
+  definer account refuses 1 (error 3118). G39, a positive control, shows that
+  the release interface works without the gate. G50 is the known gap below:
+  it is released with and without the gate. G54 is detective only: the
+  integrity audit finds a truncated published table in both deployments, and
+  neither prevents it.
+- **1 is refused by something else.** G41, a second release of a released
+  batch, is refused by the published table's primary key (error 1062)
+  instead of the gate (error 1644). It is refused either way; the gate's
+  refusal comes first and names the reason.
+- **What the control released.** At the end of the control run its release
+  log held 11 releases, 2 of them recorded with no verification or no
+  approval for the batch.
+
+The counts are of scenarios written for this milestone. They are not a
+coverage measure and do not weigh one scenario against another. Run 2b, the
+first control run, at `917bb91` without G55, held 54 of 54 predictions, with
+the gate adding a refusal in 33 of 51 comparable scenarios.
+
+### Clearance negatives
+
+Same procedure as Run 1, with C13 added. The last column is the full set of
+flagged checks; the expected checks are a subset of it.
+
+| ID | Perturbation | Expected | Observed | Expected checks | All checks flagged |
+|---|---|---|---|---|---|
+| C00 | none (control) | PASS | PASS | none | none |
+| C01 | unmasking role granted to the restricted builder, not activated | INCONCLUSIVE | INCONCLUSIVE | C1 | C1 |
+| C02 | `activate_all_roles_on_login` switched on | INCONCLUSIVE | INCONCLUSIVE | C2 | C2 |
+| C03 | unmasking role named in `mandatory_roles` | INCONCLUSIVE | INCONCLUSIVE | C2, C3, C7 | C2, C3, C4, C7 |
+| C04 | DEFINER view over the source, owned by an account that reads unmasked data | INCONCLUSIVE | INCONCLUSIVE | C3 | C3 |
+| C05 | policy gatekeeper changed to name the restricted builder | INCONCLUSIVE | INCONCLUSIVE | C7 | C6, C7 |
+| C06 | column UPDATE on a masked source column | INCONCLUSIVE | INCONCLUSIVE | C5, W | C5, W |
+| C07 | DDL privilege on the source table | INCONCLUSIVE | INCONCLUSIVE | C5, W | C5, W |
+| C08 | INSERT on the published table | FAIL | FAIL | W | W |
+| C09 | SELECT on the internal schema the agent cannot read | INCONCLUSIVE | INCONCLUSIVE | C5 | C5 |
+| C10 | global SELECT | INCONCLUSIVE | INCONCLUSIVE | C5 | C5 |
+| C11 | masked column moved to another existing policy | INCONCLUSIVE | INCONCLUSIVE | C7 | C7 |
+| C12 | masking policy administration privilege for the privileged builder | FAIL | FAIL | W | C1, C4, C5, C6, W |
+| C13 | as C03, with `activate_mandatory_roles` switched off | INCONCLUSIVE | INCONCLUSIVE | C2, C3, C7 | C2, C3, C7 |
+
+Every non-PASS scenario was refused at approval and at release with error
+1644, and no row was published. The flagged sets of C00 to C12 are the same
+as in Runs 1 and 2, except C10's C3 in Run 1 (see Run 2).
+
+### Mandatory roles
+
+`activate_mandatory_roles`, ON by default, makes the server activate the
+roles named in `mandatory_roles` at login, even with
+`activate_all_roles_on_login` OFF. C03 and C13 differ only in that setting:
+
+| | C03 (setting ON, the default) | C13 (setting OFF) |
+|---|---|---|
+| active role at login, restricted builder | `m1_r_unmask` | none |
+| active role at login, `m1_agent` | `m1_r_unmask` | none |
+| unmasking role reachable by `m1_agent` | yes | yes |
+| checks flagged | C2, C3, C4, C7 | C2, C3, C7 |
+| verdict | INCONCLUSIVE | INCONCLUSIVE |
+
+C4 is flagged only in C03 because only there does a live login come up with
+an active role. Under both, the role is granted to every account, so the
+agent can activate it; switching the setting off does not remove the
+exposure, and the verdict does not change.
+
+G55 switches the setting off between approval and release. In Run 3 the
+release was refused with error 1644 (`observation state changed`). The same
+G55 steps against a deployment of `917bb91`, whose observation state hash
+(`m1-obs-v1`) did not cover the setting, released the batch: before
+`4d09c75` that change went unnoticed by the release checks.
+
+A configuration lesson that holds without M1: the masking policies unmask
+for `CURRENT_ROLE_IN('m1_r_unmask')`, and in C03 the agent's own login
+already has that role active, so the agent's reads of the source tables
+return original values. M1 refused approval and release; that protects the
+published knowledge base, not the source read path. `mandatory_roles` must
+never name a role that a masking policy's gatekeeper tests, and
+`mandatory_roles`, `activate_mandatory_roles` and
+`activate_all_roles_on_login` are all part of the masking boundary. This is
+documented server behavior, not a defect.
+
+## Review checks
+
+Four points from the review of the first version, and where each stands:
+
+1. **P1 is safe for the agent, not faithful to its intent.** P1 passed every
+   check, but under the masks its compliance filter removes nothing (Run 1,
+   experiments; again in Run 3, with C0's content hash). A PASS says the
+   published output does not depend on masked data. It does not say the
+   pipeline still does its job, and P1 must not be read as a working filter.
+2. **The weak phase A is not causal.** The `--core-only` deployment shows
+   only that the harness does not produce the refusals by itself; it
+   attributes no refusal to the gate. It is kept, and was rerun in Run 3,
+   for comparison; the attribution comes from the phase A control.
+3. **G50 remains a known limitation.** A masked column moved to another
+   existing policy between verification and release is released, with the
+   gate and without it (phase A control). The verifier refuses the binding
+   change at verification time (C11), but the database does not refuse it
+   at release: the observation state hash cannot see bindings, which are
+   visible only through `SHOW CREATE TABLE`. Not changed in this milestone.
+4. **Isolated reproducibility.** Run 2 reproduced Run 1 on instances that
+   had hosted nothing else, with one difference, explained by the leftover
+   DEFINER views of Run 1's instance (C10). Run 3, on the same isolated
+   pair, agrees with both.
+
 ## Limitations
 
-- One host, one OS, one server version, both instances on the same host.
+- One host, one OS, one server version, both instances of a pair on the same
+  host.
 - Finite coverage: one source table with three masked columns, 6 twins per
-  verification, 7 experiments, 13 clearance scenarios and 54 gate
+  verification, 7 experiments, 14 clearance scenarios and 55 gate
   negatives. A PASS means no dependency on masked data was observed across
   the tested twins; it does not mean none exists.
 - Each verification tells the builder one bit about masked data (published
@@ -192,7 +429,7 @@ released.
 - Batch ids and timestamps are not part of the content hash.
 - The release procedure does not see which policy a column is bound to; the
   verifier checks bindings (C11), but a binding change between verification
-  and release is not refused by the database.
+  and release is not refused by the database (G50).
 - The lab administrator is in the trusted computing base. Separation of
   duties is between accounts, not people, and approvals in these runs were
   scripted.
@@ -210,4 +447,9 @@ released.
 - The write-surface check W is conservative: any privilege other than SELECT
   outside the quarantine tables and internal schemas is a violation, even
   where it would be harmless.
-- Phase A is a weak control (see above).
+- The gate protects publication only. It does not protect the source tables:
+  a role misconfiguration that unmasks the agent's reads (C03) is detected
+  and blocks publication, but the agent's own reads are not M1's to stop.
+- The phase A control removes the gate's enforcement and keeps the rest of
+  this deployment. Its counts depend on these grants and on the scenarios
+  written; they are not a general measure of what the gate adds.

@@ -80,6 +80,7 @@ data flow, the schemas and the verdict rules.
 |---|---|
 | `sql/10_core.sql` | Schemas, unmasking role, masking policies, synthetic source tables |
 | `sql/20_gate.sql` | Quarantine and control tables, gate triggers, hash functions, release procedure |
+| `sql/21_control_release.sql` | Release procedure without checks, for the phase A control deployment only |
 | `sql/30_grants.sql` | Grants for every account |
 | `sql/99_teardown.sql` | Removes every M1 object from an instance |
 | `m1/` | Python package: setup, pipelines, build, verifier, clearance checks, twins, gate negatives, experiments, agent |
@@ -120,12 +121,20 @@ downloaded.
    python -m m1 teardown --instance lab
    ```
 
-   `python -m m1 deploy --instance lab --core-only` deploys without the gate.
-   Most gate negatives then cannot even be set up, because the control
-   tables do not exist, which shows that the harness does not produce the
-   expected refusals by itself; four are still met through plain privileges
-   and the locked definer account (see `RESULTS.md`). Teardown before
-   switching between the two deployments.
+   Two deployments without the gate serve as controls for the gate
+   negatives (see `RESULTS.md`); teardown before switching deployments.
+
+   - `python -m m1 deploy --instance lab --core-only` deploys no gate at
+     all. Most gate negatives then cannot even be set up, because the
+     control tables do not exist, which shows only that the harness does
+     not produce the expected refusals by itself (weak control).
+   - `python -m m1 deploy --instance lab --control` deploys the gate's
+     tables, functions, grants and release procedure interface, with no
+     triggers and a release procedure that checks nothing. Then
+     `python -m m1 phase-a --gate-result <negatives-*.json>` runs the gate
+     negatives on it and compares each one with a gate run (phase B) and
+     with the prediction written in `m1/phase_a.py` before the control
+     first ran.
 
 Every command that runs tests writes its raw result as JSON to the local
 results folder. Those files contain identities, hashes and timings of one
