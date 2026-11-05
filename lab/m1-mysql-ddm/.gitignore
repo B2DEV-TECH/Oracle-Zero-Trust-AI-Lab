@@ -1,0 +1,5 @@
+# Python caches and local settings (raw results and secrets live outside the repository)
+__pycache__/
+*.pyc
+config.json
+results/
