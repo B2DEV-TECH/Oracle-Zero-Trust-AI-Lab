@@ -13,10 +13,15 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("deploy", help="deploy M1 on one instance")
     d.add_argument("--instance", choices=INSTANCES, required=True)
-    d.add_argument("--core-only", action="store_true", help="without the gate (shows the negatives failing)")
+    mode = d.add_mutually_exclusive_group()
+    mode.add_argument("--core-only", action="store_true", help="without the gate (shows the negatives failing)")
+    mode.add_argument("--control", action="store_true",
+                      help="the gate's tables, functions and grants without its enforcement (phase A control)")
     t = sub.add_parser("teardown", help="remove M1 from one instance")
     t.add_argument("--instance", choices=INSTANCES, required=True)
     sub.add_parser("negatives", help="gate negative tests on the lab instance")
+    pa = sub.add_parser("phase-a", help="gate negatives on the control deployment, compared with a gate run")
+    pa.add_argument("--gate-result", required=True, help="negatives JSON of a gate run (phase B)")
     b = sub.add_parser("build", help="build one batch in the lab quarantine and seal it")
     b.add_argument("--pipeline", required=True)
     b.add_argument("--builder", choices=["m1_builder_p", "m1_builder_r"], required=True)
@@ -35,13 +40,16 @@ def main() -> None:
 
     if a.cmd == "deploy":
         from . import setup
-        setup.deploy(a.instance, with_gate=not a.core_only)
+        setup.deploy(a.instance, with_gate=not a.core_only, control=a.control)
     elif a.cmd == "teardown":
         from . import setup
         setup.teardown(a.instance)
     elif a.cmd == "negatives":
         from . import negatives
         negatives.run_all()
+    elif a.cmd == "phase-a":
+        from . import phase_a
+        phase_a.run(a.gate_result)
     elif a.cmd == "build":
         from . import build
         print(json.dumps(build.build_lab(a.pipeline, a.builder), indent=2, default=str))

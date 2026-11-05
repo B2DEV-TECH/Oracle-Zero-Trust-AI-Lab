@@ -32,7 +32,43 @@ def _script(name: str) -> str:
     return (SQL_DIR / name).read_text(encoding="utf-8")
 
 
-def deploy(instance: str, with_gate: bool = True) -> None:
+CREATE_RE = re.compile(r"CREATE DEFINER = '[^']+'@'%' (FUNCTION|TRIGGER|PROCEDURE) ")
+
+
+def control_gate_sql() -> str:
+    """20_gate.sql without its enforcement, for the phase A control.
+
+    The tables and the functions are kept as written in 20_gate.sql. Its 21
+    triggers and its release procedure are left out, and the release procedure
+    of 21_control_release.sql (same interface, no checks) is added. The counts
+    are checked so that a change to 20_gate.sql cannot silently change the
+    control.
+    """
+    text = _script("20_gate.sql")
+    tables, rest = text.split("DELIMITER //", 1)
+    body, tail = rest.split("DELIMITER ;", 1)
+    if tail.strip():
+        raise ValueError("20_gate.sql: unexpected text after DELIMITER ;")
+    kept, dropped = [], {"TRIGGER": 0, "PROCEDURE": 0}
+    for stmt in body.split("//"):
+        m = CREATE_RE.search(stmt)
+        if not m:
+            if stmt.strip() and not all(line.strip().startswith("--") or not line.strip()
+                                        for line in stmt.splitlines()):
+                raise ValueError(f"20_gate.sql: unrecognised statement: {stmt.strip()[:60]}")
+            continue
+        if m.group(1) == "FUNCTION":
+            kept.append(stmt)
+        else:
+            dropped[m.group(1)] += 1
+    if (len(kept), dropped["TRIGGER"], dropped["PROCEDURE"]) != (4, 21, 1):
+        raise ValueError(f"20_gate.sql: expected 4 functions, 21 triggers and 1 procedure; "
+                         f"found {len(kept)}, {dropped['TRIGGER']} and {dropped['PROCEDURE']}")
+    return (tables + "DELIMITER //\n" + "//\n".join(kept) + "//\nDELIMITER ;\n\n"
+            + _script("21_control_release.sql"))
+
+
+def deploy(instance: str, with_gate: bool = True, control: bool = False) -> None:
     cfg = config.load()
     if int(db.scalar(instance, "root",
                      "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME LIKE 'm1\\_%';")):
@@ -51,11 +87,15 @@ def deploy(instance: str, with_gate: bool = True) -> None:
 
     db.must(instance, "root", _script("10_core.sql"), "10_core.sql")
     db.must(instance, "root", "\n".join(creates), "accounts")
-    if with_gate:
+    if control:
+        db.must(instance, "root", control_gate_sql(), "20_gate.sql without enforcement + 21_control_release.sql")
+        db.must(instance, "root", _script("30_grants.sql"), "30_grants.sql")
+    elif with_gate:
         db.must(instance, "root", _script("20_gate.sql"), "20_gate.sql")
         db.must(instance, "root", _script("30_grants.sql"), "30_grants.sql")
     db.must(instance, "root", fixtures.insert_sql(), "fixtures")
-    print(f"{instance}: deployed ({'core + gate' if with_gate else 'core only'}), {len(ACCOUNTS)} accounts")
+    kind = "core + control without gate enforcement" if control else "core + gate" if with_gate else "core only"
+    print(f"{instance}: deployed ({kind}), {len(ACCOUNTS)} accounts")
 
 
 def teardown(instance: str) -> None:
