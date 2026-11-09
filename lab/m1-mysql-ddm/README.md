@@ -46,9 +46,10 @@ database enforces that.
    verification, only the approver can approve, only the release account can
    release, and release recomputes every hash and refuses anything but an
    approved PASS whose content, code, masking policy definitions, grants and
-   role settings are still the ones that were verified. (Column bindings of
-   policies are checked by the verifier, not by the release procedure; see
-   the limitations in `RESULTS.md`.)
+   role settings are still the ones that were verified. Column bindings of
+   policies are checked by the verifier; the release procedure, which cannot
+   read them, refuses a batch whose source tables were altered after it was
+   opened (see `RESULTS.md`, Run 4).
 4. **An agent that reads only what was released.** `m1_agent` embeds the
    question with the same pinned model and ranks the published chunks by
    cosine similarity. There is no language model in the loop.
@@ -114,7 +115,7 @@ downloaded.
    python -m unittest discover -s tests
    python -m m1 deploy --instance lab
    python -m m1 deploy --instance shadow
-   python -m m1 negatives               # gate negatives (lab)
+   python -m m1 negatives               # gate negatives (lab); --only G39 G50 G56 G57 for a focused run
    python -m m1 experiments             # C0, P0, P0b, P1, P2, PND, A/A
    python -m m1 clearance-negatives     # identity and policy perturbations (lab and shadow)
    python -m m1 agent --question "cold-chain logistics for pharma" -k 3

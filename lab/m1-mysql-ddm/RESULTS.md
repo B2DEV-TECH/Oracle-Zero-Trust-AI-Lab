@@ -1,28 +1,30 @@
 # M1 results
 
-Evidence runs on 2026-11-05, each from fresh deployments, in one
-environment. Every number below comes from the runs' raw results, which stay
-local because they hold identities, hashes and timings of one machine. These
-are observations within the tested scope, not a security guarantee.
+Evidence runs on 2026-11-05 (Runs 1 to 3) and 2026-11-09 (Run 4), each from
+fresh deployments, in one environment. Every number below comes from the
+runs' raw results, which stay local because they hold identities, hashes and
+timings of one machine. These are observations within the tested scope, not
+a security guarantee.
 
 | Run | Code | Instances | What it is |
 |---|---|---|---|
 | Run 1 | `c7688b8` | lab and shadow | the original evidence, kept below as recorded |
 | Run 2 | `c7688b8` | a second pair, created for these runs | the same sequence again, to check reproducibility under isolated conditions |
 | Run 2b | `917bb91` | second pair | first run of the phase A control (54 gate negatives) |
-| Run 3 | `4d09c75` | second pair, every M1 object redeployed | the current evidence: full sequence, phase A control, `activate_mandatory_roles` |
+| Run 3 | `4d09c75` | second pair, every M1 object redeployed | full sequence, phase A control, `activate_mandatory_roles` |
+| Run 4 | `8954e87` | second pair, every M1 object redeployed | the current evidence: G50 closed at release, before and after, then the full sequence |
 
 For each run, the files under `m1/`, `sql/` and `tests/` that ran match, by
 SHA-256, the files of the commit named in the table. The commit that adds
 this version of the document changes documentation only, so its code is
-Run 3's.
+Run 4's.
 
 ## Environment
 
 | Item | Value |
 |---|---|
 | Database | MySQL Enterprise Server 26.7.0-commercial, Windows x64 ZIP, component `component_object_policy` |
-| Instances | two on one host (lab and shadow), loopback only, binary logging on; Runs 2, 2b and 3 used a second pair on the same host and version, created for them |
+| Instances | two on one host (lab and shadow), loopback only, binary logging on; Runs 2, 2b, 3 and 4 used a second pair on the same host and version, created for them |
 | OS and runtime | Windows 11, CPython 3.13.15 |
 | Embedder | fastembed 0.9.1, onnxruntime 1.31.1, numpy 2.5.4, tokenizers 0.23.3 (hashed wheels in `requirements.lock`) |
 | Model | `BAAI/bge-small-en-v1.5`, revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, files checked against a SHA-256 manifest, one thread, network sockets blocked |
@@ -215,7 +217,10 @@ DEFINER views, not from M1. The sealed content hashes of C0, P0, P0b, P1 and
 P2 were the same in Runs 1, 2 and 3; PND's differ, as a nondeterministic
 build should.
 
-## Run 3: current evidence (`4d09c75`)
+## Run 3: phase A control and mandatory role activation (`4d09c75`)
+
+Kept as recorded. Run 4 changes G50's outcome and adds G56 and G57 (see
+Run 4).
 
 Two commits separate Run 3's code from Run 1's:
 
@@ -390,6 +395,156 @@ never name a role that a masking policy's gatekeeper tests, and
 `activate_all_roles_on_login` are all part of the masking boundary. This is
 documented server behavior, not a defect.
 
+## Run 4: G50 closed at release (`8954e87`)
+
+One commit separates Run 4's code from Run 3's. `8954e87` adds one check to
+the release procedure and the tests for it. The verifier, the pipelines, the
+masking policies, the observation state hash (`m1-obs-v2`) and every other
+gate check are unchanged.
+
+### The gap and the check that closes it
+
+Through Run 3, G50 moved a masked column to another existing policy after
+approval, and the batch was released with and without the gate. Column
+bindings are visible only through `SHOW CREATE TABLE`, which a routine cannot
+read, and no catalog a routine can read records them on this server:
+`mysql.column_masking_policies` and `performance_schema.column_masking_policy`
+list policies only, and `information_schema.COLUMNS.EXTRA` says
+`MASKING POLICY` without naming it. Moving a column to another policy changes
+none of them, so the observation state hash cannot cover bindings.
+
+Every statement that changes a binding is DDL on the source table, and on
+this server every such DDL sets the table's `CREATE_TIME` in
+`information_schema.TABLES`. Probed on the lab instance of the second pair
+before the change, comparing every column of the candidate catalogs:
+
+| Statement on `m1_src.suppliers` | Binding changed | `CREATE_TIME` changed |
+|---|---|---|
+| `MODIFY ... MASKING POLICY`, with the default algorithm, `INSTANT`, `INPLACE` and `COPY` | yes | yes |
+| `CHANGE ... MASKING POLICY` | yes | yes |
+| `ALTER COLUMN ... SET MASKING POLICY`, `ALTER COLUMN ... DROP MASKING POLICY` | yes | yes |
+| `MODIFY` without a policy (unbind) | yes | yes |
+| two columns swap their policies in one statement | yes | yes |
+| `CREATE` and `DROP MASKING POLICY`, `GRANT` and `REVOKE` (a role, `ALTER`), `SET GLOBAL`, `UPDATE`, `ANALYZE TABLE` | no | no |
+
+`CREATE_TIME` has whole-second resolution (truncated) and is shown in the
+session time zone, like the batch's `created_at`. Of everything else read,
+only the InnoDB table id changed, and only with `COPY`.
+
+The release procedure now refuses a batch when any `m1_src` table has a
+`CREATE_TIME` in or after the second the batch was opened (error 1644,
+`source table definition changed after the batch was opened`). If no source
+table is visible, it refuses too. The check runs after the observation state
+check, so the refusals of Run 3 keep their messages.
+
+How it covers the window between the binding check and the release: the
+verifier checks the bindings (C7, from `SHOW CREATE TABLE`) during
+verification, which can only start after the batch was opened and sealed. A
+binding that differs from the contract at that check gives INCONCLUSIVE,
+which is never approved or released. A binding changed at any later moment,
+up to the release, gives the table a `CREATE_TIME` in or after the second the
+batch was opened, and the release is refused. Because the comparison is with
+the batch's opening second and not with an earlier `CREATE_TIME`, a change in
+the same second as an earlier DDL cannot hide, and moving a column and moving
+it back (G57) is refused as well.
+
+### Sequence
+
+Commands as in the README, from `lab/m1-mysql-ddm`, with `M1_CONFIG` pointing
+at the second pair's settings. Every deployment was fresh (teardown first).
+
+| Step | Commands | Outcome |
+|---|---|---|
+| Unit tests | `python -m unittest discover -s tests` | 58 tests, OK |
+| G50 before: the code of `8954e87` with `sql/20_gate.sql` of `f226ed1` | `deploy --instance lab`, then `negatives --only G39 G50 G56 G57` | G39 and G56 met; G50 and G57 not met: each batch was released, 2 rows published, 1 release record |
+| G50 after: the code of `8954e87` | the same | 4 of 4 met |
+| Weak phase A | `deploy --instance lab --core-only`, `negatives` | 4 of 57 met, the same four as Runs 1 and 3 |
+| Phase B | `deploy --instance lab`, `negatives` | 57 of 57 met; observation state restored |
+| Phase A control | `deploy --instance lab --control`, `phase-a --gate-result <phase B result>` | 57 of 57 predictions held; the gate adds a refusal in 36 of 54 comparable scenarios |
+| Experiments on fresh lab and shadow instances | `deploy` on both, `experiments` | 7 of 7 as expected, same verdicts and published rows as Run 1 |
+| Clearance negatives, same instances | `clearance-negatives` | 14 of 14 as expected; lab and shadow state restored |
+| Agent demo | `agent --question ... -k 3` | the same top three scores as Run 1 for both questions (0.643, 0.640, 0.632: three supplier profiles with no compliance information; 0.765, 0.727, 0.648: two cold-chain suppliers and a freight forwarder) |
+
+The code sets of the before and after steps differ only in `sql/20_gate.sql`;
+both were recorded by SHA-256.
+
+### G50 before and after, and the scenarios added with it
+
+| ID | What happens | Before (`f226ed1` gate) | After (`8954e87`) | Phase A control |
+|---|---|---|---|---|
+| G50 | masked column moved to another existing policy after approval, then release | released: 2 rows published, 1 release record | refused, 1644, `source table definition changed after the batch was opened`; 0 rows published, no release record | released |
+| G57 | moved after the seal and moved back before the verification is recorded; PASS, APPROVE, release | released: 2 rows, 1 release record | refused, same error and message; 0 rows, no release record | released |
+| G56 | positive control: moved and moved back 1.1 seconds before the batch is opened; seal, PASS, APPROVE, release | released: 2 of 2 rows, 1 release record | released: 2 of 2 rows, 1 release record | released |
+| G39 | positive control: seal, PASS, APPROVE, release, binding untouched | released | released | released |
+
+G50 and G57 now also check what reached publication: a refusal is met only
+with no published row and no release record for the batch, and G56 only when
+every quarantined row is published under one release record. G57's
+verification is recorded after the binding is back, so a binding check at
+that moment finds the contract in force; the release is refused because the
+table was altered after the batch was opened. G56 shows the other side: a
+change made and undone before the batch is opened does not block it.
+
+The legitimate flow with the real verifier is unchanged: C0, P1 and P2 in the
+experiments and C00 in the clearance negatives were approved and released,
+and each published copy hashed to its seal.
+
+### Phase A control
+
+Same procedure as Run 3, with 57 scenarios. G50 moved to the category
+"change between verification and publication" and out of the administrator
+set: the change is the administrator's, as in G47 to G49 and G55, but the
+action the gate refuses is the release by the release account. The
+predictions for G50, G56 and G57 were written in `8954e87`, before the
+control ran.
+
+| Class | Run 3 | Run 4 |
+|---|---|---|
+| succeeded | 34 | 36 (G50, met in Run 3, and G57) |
+| met | 17 | 17 (G56 in, G50 out) |
+| other | 1 | 1 |
+| not executable | 2 | 2 |
+| not comparable | 1 | 1 |
+
+| Category | Scenarios | With the gate (phase B) | Control: succeeded, refused only with the gate | Control: met | Control: other, not executable, not comparable | Weak phase A (`--core-only`) |
+|---|---|---|---|---|---|---|
+| publish without valid approval | 9 | 9 | 9 | 0 | 0 | 0 |
+| forged verification | 9 | 9 | 5 (1 administrator) | 4 | 0 | 0 |
+| modify a sealed artifact | 7 | 7 | 5 (4 administrator) | 1 | 1 not executable | 0 |
+| change between verification and publication | 7 | 7 | 6 | 0 | 1 not executable | 0 |
+| direct write to published tables | 9 | 9 | 5 (5 administrator) | 3 | 1 other | 3 |
+| separation of duties | 9 | 9 | 3 | 6 | 0 | 1 |
+| identity preconditions | 2 | 2 | 2 | 0 | 0 | 0 |
+| observation state | 1 | 1 | 1 | 0 | 0 | 0 |
+| administrator (trusted computing base) | 1 | 1 | 0 | 1 | 0 | 0 |
+| positive control | 3 | 3 | 0 | 2 | 1 not comparable | 0 |
+| **Total** | **57** | **57** | **36 (10 administrator)** | **17** | **4** | **4** |
+
+The gate adds a refusal in 36 of 54 comparable scenarios: 26 where the actor
+is not the administrator (Run 3's 24, G50 and G57) and the same 10 where it
+is. At the end of the control run its release log held 13 releases, 2 of
+them with no verification or no approval for the batch. As in Run 3, these
+counts are of the scenarios written for this milestone, not a coverage
+measure.
+
+### Reproducibility against Run 3
+
+- Phase B: every scenario of Run 3 gave the same result and the same observed
+  error and message, except G50 (released in Run 3, refused now). G56 and G57
+  are new.
+- Weak phase A: the same four met (G34, G35, G36, G44).
+- Experiments: same verdicts and published rows; the sealed content hashes of
+  C0, P0, P0b, P1 and P2 are the same as in Runs 1, 2 and 3, and PND's differs
+  again, as a nondeterministic build should.
+- Clearance negatives: every scenario gave the same verdict, the same full
+  set of flagged checks and the same published rows as Run 3.
+- Unit tests: 58, Run 3's 50 plus 8 for the publication checks of the
+  negatives and the release message.
+- Timing: phase B (teardown, deploy and negatives) about 17 seconds, the
+  experiments about 1 minute, the clearance negatives about 2.5 minutes.
+
+No other divergence from Run 3 was observed.
+
 ## Review checks
 
 Four points from the review of the first version, and where each stands:
@@ -403,23 +558,27 @@ Four points from the review of the first version, and where each stands:
    only that the harness does not produce the refusals by itself; it
    attributes no refusal to the gate. It is kept, and was rerun in Run 3,
    for comparison; the attribution comes from the phase A control.
-3. **G50 remains a known limitation.** A masked column moved to another
-   existing policy between verification and release is released, with the
-   gate and without it (phase A control). The verifier refuses the binding
-   change at verification time (C11), but the database does not refuse it
-   at release: the observation state hash cannot see bindings, which are
-   visible only through `SHOW CREATE TABLE`. Not changed in this milestone.
+3. **G50 is closed at release (Run 4).** Through Run 3, a masked column
+   moved to another existing policy between verification and release was
+   released, with the gate and without it (phase A control): the verifier
+   refuses the binding change at verification time (C11), and the
+   observation state hash cannot see bindings, which are visible only through
+   `SHOW CREATE TABLE`. The release procedure now refuses a batch whose
+   source tables were altered in or after the second it was opened, which
+   every binding change on this server does. G50 and G57 are refused with no
+   published row; G39, G56 and the experiments' PASS builds are still
+   released. The limits of the check are listed below.
 4. **Isolated reproducibility.** Run 2 reproduced Run 1 on instances that
    had hosted nothing else, with one difference, explained by the leftover
-   DEFINER views of Run 1's instance (C10). Run 3, on the same isolated
-   pair, agrees with both.
+   DEFINER views of Run 1's instance (C10). Runs 3 and 4, on the same
+   isolated pair, agree with both, apart from what Run 4's change explains.
 
 ## Limitations
 
 - One host, one OS, one server version, both instances of a pair on the same
   host.
 - Finite coverage: one source table with three masked columns, 6 twins per
-  verification, 7 experiments, 14 clearance scenarios and 55 gate
+  verification, 7 experiments, 14 clearance scenarios and 57 gate
   negatives. A PASS means no dependency on masked data was observed across
   the tested twins; it does not mean none exists.
 - Each verification tells the builder one bit about masked data (published
@@ -427,9 +586,17 @@ Four points from the review of the first version, and where each stands:
 - The verifier varies only the database source. Inputs that do not come
   from it (files, environment, network, the model) are not varied.
 - Batch ids and timestamps are not part of the content hash.
-- The release procedure does not see which policy a column is bound to; the
-  verifier checks bindings (C11), but a binding change between verification
-  and release is not refused by the database (G50).
+- The release procedure does not see which policy a column is bound to. It
+  refuses a batch whose source tables had DDL in or after the second it was
+  opened, and the verifier checks the bindings themselves (C7). That check
+  rests on `CREATE_TIME` changing with every DDL, observed on
+  26.7.0-commercial for the statements listed in Run 4, and on the server
+  clock not going backwards. It fails closed in two harmless cases: any DDL
+  on a source table refuses pending batches, and so does a DDL in the same
+  second as a batch is opened. A DDL that commits after the release
+  procedure's check and before its commit is not refused, as for the other
+  release checks. The refusal does not say which binding changed; the
+  verifier does.
 - The lab administrator is in the trusted computing base. Separation of
   duties is between accounts, not people, and approvals in these runs were
   scripted.
