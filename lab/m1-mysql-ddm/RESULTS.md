@@ -12,7 +12,7 @@ a security guarantee.
 | Run 2 | `c7688b8` | a second pair, created for these runs | the same sequence again, to check reproducibility under isolated conditions |
 | Run 2b | `917bb91` | second pair | first run of the phase A control (54 gate negatives) |
 | Run 3 | `4d09c75` | second pair, every M1 object redeployed | full sequence, phase A control, `activate_mandatory_roles` |
-| Run 4 | `8954e87` | second pair, every M1 object redeployed | the current evidence: G50 closed at release, before and after, then the full sequence |
+| Run 4 | `8954e87` | second pair, every M1 object redeployed | the current evidence: G50 blocked at release in the reproduced scenario, before and after, then the full sequence |
 
 For each run, the files under `m1/`, `sql/` and `tests/` that ran match, by
 SHA-256, the files of the commit named in the table. The commit that adds
@@ -395,12 +395,23 @@ never name a role that a masking policy's gatekeeper tests, and
 `activate_all_roles_on_login` are all part of the masking boundary. This is
 documented server behavior, not a defect.
 
-## Run 4: G50 closed at release (`8954e87`)
+## Run 4: G50 blocked at release (`8954e87`)
 
 One commit separates Run 4's code from Run 3's. `8954e87` adds one check to
 the release procedure and the tests for it. The verifier, the pipelines, the
 masking policies, the observation state hash (`m1-obs-v2`) and every other
 gate check are unchanged.
+
+**Outcome.** In the reproduced scenario, the mitigation blocked G50. On the
+same instance and with the same steps, the batch whose masked column is
+moved to another policy after approval was released by the previous release
+procedure (2 rows published, 1 release record) and is refused by the one in
+`8954e87` (error 1644, no row published, no release record). G57, a variant
+added with it, behaves the same. This holds for the scenarios run, on one
+server version; it is not a proof that every binding change is caught. The
+check also leaves a residual window, described below under "Residual
+window": a DDL that commits after the release procedure's check and before
+the release commits is not refused.
 
 ### The gap and the check that closes it
 
@@ -442,11 +453,35 @@ verifier checks the bindings (C7, from `SHOW CREATE TABLE`) during
 verification, which can only start after the batch was opened and sealed. A
 binding that differs from the contract at that check gives INCONCLUSIVE,
 which is never approved or released. A binding changed at any later moment,
-up to the release, gives the table a `CREATE_TIME` in or after the second the
-batch was opened, and the release is refused. Because the comparison is with
-the batch's opening second and not with an earlier `CREATE_TIME`, a change in
-the same second as an earlier DDL cannot hide, and moving a column and moving
-it back (G57) is refused as well.
+up to the release procedure's own check, gives the table a `CREATE_TIME` in
+or after the second the batch was opened, and the release is refused.
+Because the comparison is with the batch's opening second and not with an
+earlier `CREATE_TIME`, a change in the same second as an earlier DDL cannot
+hide, and moving a column and moving it back (G57) is refused as well.
+
+### Residual window: concurrent DDL between the check and the commit
+
+The release procedure reads `CREATE_TIME` once, inside its transaction,
+after the observation state check and before it copies the batch. The
+argument above reaches that check, not the release's commit. A DDL in
+another session that commits after the check and before the release commits
+is not refused, and the batch is published while a binding may already
+differ from the verified one. The same holds for the other release checks:
+each reads the state once, so a change committed between that read and the
+commit is not seen.
+
+- No scenario exercises it. G50, G56 and G57 run their steps one after the
+  other. The release procedure takes no lock meant to delay such a DDL, and
+  no test checked whether some lock does so anyway.
+- The interval lasts as long as the rest of the release procedure (copy,
+  rehash, release record, commit). A binding changed in it leaves the
+  published batch where a change made just after the release would, and no
+  publication gate can refuse that. This is an argument, not a measurement.
+- Closing it would need the release to hold, until it commits, a lock that
+  blocks DDL on the source tables. Reading the source tables inside the
+  transaction would take one, but the gate's definer reads no source by
+  design (C3), so that would change the definer's conditions. Not done in
+  this milestone.
 
 ### Sequence
 
@@ -558,7 +593,8 @@ Four points from the review of the first version, and where each stands:
    only that the harness does not produce the refusals by itself; it
    attributes no refusal to the gate. It is kept, and was rerun in Run 3,
    for comparison; the attribution comes from the phase A control.
-3. **G50 is closed at release (Run 4).** Through Run 3, a masked column
+3. **G50 is blocked at release in the reproduced scenario (Run 4).**
+   Through Run 3, a masked column
    moved to another existing policy between verification and release was
    released, with the gate and without it (phase A control): the verifier
    refuses the binding change at verification time (C11), and the
@@ -567,7 +603,9 @@ Four points from the review of the first version, and where each stands:
    source tables were altered in or after the second it was opened, which
    every binding change on this server does. G50 and G57 are refused with no
    published row; G39, G56 and the experiments' PASS builds are still
-   released. The limits of the check are listed below.
+   released. A DDL that commits between the release procedure's check and
+   the release's commit is still not refused (Run 4, residual window); the
+   other limits of the check are listed below.
 4. **Isolated reproducibility.** Run 2 reproduced Run 1 on instances that
    had hosted nothing else, with one difference, explained by the leftover
    DEFINER views of Run 1's instance (C10). Runs 3 and 4, on the same
@@ -595,8 +633,8 @@ Four points from the review of the first version, and where each stands:
   on a source table refuses pending batches, and so does a DDL in the same
   second as a batch is opened. A DDL that commits after the release
   procedure's check and before its commit is not refused, as for the other
-  release checks. The refusal does not say which binding changed; the
-  verifier does.
+  release checks (Run 4, residual window). The refusal does not say which
+  binding changed; the verifier does.
 - The lab administrator is in the trusted computing base. Separation of
   duties is between accounts, not people, and approvals in these runs were
   scripted.
