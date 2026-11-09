@@ -61,7 +61,7 @@ Every arrow is checked by a trigger or by the release procedure, owned by
 | Open, add, seal | the batch builder is recorded from `USER()`; only that builder adds chunks or seals; an empty batch cannot be sealed; the seal records the content hash and the observation state, and is refused if the state changed during the build |
 | Verify | only `m1_verifier`; batch sealed; a builder cannot verify its own batch; the recorded content hash equals the seal and the content recomputed now; the recorded observation state equals the current one; a PASS requires the verified code hash to be the batch code hash. (Whether the state still equals the sealed one is checked by the verifier, as the drift fact below, not by this trigger.) |
 | Approve | only `m1_approver`; the verification belongs to the batch, is the latest one and is PASS; the approved hash equals the verified hash; the approver differs from builder and verifier |
-| Release | only `m1_release`; latest verification is a PASS recorded by `m1_verifier` for the batch's code; latest approval approves exactly that verification; content hash recomputed and equal to the seal, the verification and the approval; observation state recomputed and equal to the verified one; the published copy rehashed and equal to the seal; all in one transaction |
+| Release | only `m1_release`; latest verification is a PASS recorded by `m1_verifier` for the batch's code; latest approval approves exactly that verification; content hash recomputed and equal to the seal, the verification and the approval; observation state recomputed and equal to the verified one; no source table altered (DDL) in or after the second the batch was opened; the published copy rehashed and equal to the seal; all in one transaction |
 | Published table | rows enter only through `release_batch` and must be sealed quarantine rows; published rows cannot be updated or deleted |
 | Every attributing step | no anonymous account and no proxy mapping exists, because attribution relies on `USER()` |
 
@@ -78,7 +78,12 @@ Three hashes tie the flow together:
   `activate_mandatory_roles`; tag `m1-obs-v2`) and the definitions of the
   gate's own triggers and routines.
   It does not cover which policy each column is bound to (only visible
-  through `SHOW CREATE TABLE`); the verifier checks bindings separately.
+  through `SHOW CREATE TABLE`). The verifier checks the bindings, after the
+  batch is opened; every statement that changes a binding is DDL on the
+  source table and sets its `CREATE_TIME`, and the release procedure refuses
+  a batch whose source tables were altered in or after the second it was
+  opened. Together they cover the window from the verifier's check to the
+  release (gate negatives G50 and G57).
 - **Code hash**: the pipeline sources plus the identity of the pinned
   embedding model. The verifier refuses to vouch for a batch built by other
   code.
