@@ -37,7 +37,7 @@ MET, OTHER, SUCCEEDED, NOT_EXECUTABLE, NOT_COMPARABLE = (
 # Scenarios whose refused action is performed by the lab administrator. The
 # administrator can drop the triggers, so for these the gate is a guardrail,
 # not a boundary (trusted computing base).
-ADMINISTRATOR = {"G07", "G14", "G15", "G16", "G17", "G18", "G37", "G38", "G42", "G43", "G45", "G46", "G50", "G54"}
+ADMINISTRATOR = {"G07", "G14", "G15", "G16", "G17", "G18", "G37", "G38", "G42", "G43", "G45", "G46", "G54"}
 
 _GRANTS = (MET, None, "refused by privileges (error 1142) with or without the gate")
 _EXECUTE = (MET, None, "refused by the EXECUTE grant on the release procedure (error 1370)")
@@ -72,10 +72,15 @@ PREDICTIONS: dict[str, tuple[str, int | None, str]] = {
     "G45": _ADMIN,
     "G46": _DROPS_TRIGGER,
     "G47": _GATE, "G48": _GATE, "G49": _GATE,
-    "G50": (MET, None, "known gap: the release goes through with and without the gate"),
+    # G50 was the known gap (met: released with and without the gate) until the
+    # release procedure refused a source table altered after the batch was opened.
+    "G50": _GATE,
     "G51": _GATE, "G52": _GATE, "G53": _GATE,
     "G54": (MET, None, "detective only: the audit finds the truncation; neither deployment prevents it"),
     "G55": _GATE,
+    "G56": (MET, None, "positive control: a binding moved and moved back before the batch is opened "
+                       "does not block its release"),
+    "G57": _GATE,
 }
 
 
