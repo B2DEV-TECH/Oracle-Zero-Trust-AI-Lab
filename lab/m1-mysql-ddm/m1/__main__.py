@@ -19,7 +19,8 @@ def main() -> None:
                       help="the gate's tables, functions and grants without its enforcement (phase A control)")
     t = sub.add_parser("teardown", help="remove M1 from one instance")
     t.add_argument("--instance", choices=INSTANCES, required=True)
-    sub.add_parser("negatives", help="gate negative tests on the lab instance")
+    n = sub.add_parser("negatives", help="gate negative tests on the lab instance")
+    n.add_argument("--only", nargs="*", help="scenario ids (G40 to G45 need G39 in the same run)")
     pa = sub.add_parser("phase-a", help="gate negatives on the control deployment, compared with a gate run")
     pa.add_argument("--gate-result", required=True, help="negatives JSON of a gate run (phase B)")
     b = sub.add_parser("build", help="build one batch in the lab quarantine and seal it")
@@ -46,7 +47,7 @@ def main() -> None:
         setup.teardown(a.instance)
     elif a.cmd == "negatives":
         from . import negatives
-        negatives.run_all()
+        negatives.run_all(a.only)
     elif a.cmd == "phase-a":
         from . import phase_a
         phase_a.run(a.gate_result)

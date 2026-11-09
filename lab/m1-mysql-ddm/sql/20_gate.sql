@@ -151,10 +151,12 @@ END//
 -- and routines. Password hashes and grant timestamps are excluded.
 -- v2 adds activate_mandatory_roles (default ON), which activates the roles
 -- named in mandatory_roles at login even with activate_all_roles_on_login OFF.
--- Known gap: the column -> policy binding (which policy a column uses) is only
--- visible through SHOW CREATE TABLE, which a routine cannot capture. Swapping
--- a column between two existing policies does not change this hash; the
--- verifier records SHOW CREATE TABLE separately.
+-- The column -> policy binding (which policy a column uses) is only visible
+-- through SHOW CREATE TABLE, which a routine cannot capture, so moving a column
+-- to another existing policy does not change this hash. The verifier checks
+-- the bindings (SHOW CREATE TABLE), and release_batch refuses a batch whose
+-- source tables were altered after it was opened, which covers the window
+-- between that check and the release.
 CREATE DEFINER = 'm1_gate_def'@'%' FUNCTION m1_ctl.observation_state_hash()
   RETURNS CHAR(64) READS SQL DATA SQL SECURITY DEFINER
 BEGIN
@@ -445,7 +447,8 @@ CREATE DEFINER = 'm1_gate_def'@'%' TRIGGER m1_kb_pub.chunks_bd BEFORE DELETE ON 
   SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'M1 gate: published chunks are immutable'//
 
 -- One transaction: lock the seal, check the latest verification and approval,
--- recompute the content and observation hashes, copy, and check the copy.
+-- recompute the content and observation hashes, check that no source table
+-- was altered after the batch was opened, copy, and check the copy.
 CREATE DEFINER = 'm1_gate_def'@'%' PROCEDURE m1_ctl.release_batch(IN p_batch BIGINT UNSIGNED)
   MODIFIES SQL DATA SQL SECURITY DEFINER
 BEGIN
@@ -453,6 +456,8 @@ BEGIN
   DECLARE v_count INT UNSIGNED DEFAULT 0;
   DECLARE v_builder VARCHAR(288) DEFAULT NULL;
   DECLARE v_code CHAR(64) DEFAULT NULL;
+  DECLARE v_opened TIMESTAMP(6) DEFAULT NULL;
+  DECLARE v_altered TIMESTAMP DEFAULT NULL;
   DECLARE v_ver BIGINT UNSIGNED DEFAULT NULL;
   DECLARE v_verdict VARCHAR(12) DEFAULT NULL;
   DECLARE v_vhash CHAR(64) DEFAULT NULL;
@@ -481,7 +486,8 @@ BEGIN
   END IF;
 
   START TRANSACTION;
-  SELECT s.sealed_hash, s.row_count, b.builder, b.code_hash INTO v_sealed, v_count, v_builder, v_code
+  SELECT s.sealed_hash, s.row_count, b.builder, b.code_hash, b.created_at
+    INTO v_sealed, v_count, v_builder, v_code, v_opened
     FROM m1_ctl.seals s JOIN m1_kb_q.batches b ON b.batch_id = s.batch_id
    WHERE s.batch_id = p_batch FOR UPDATE;
   IF v_sealed IS NULL THEN
@@ -524,6 +530,16 @@ BEGIN
   SET v_obs = m1_ctl.observation_state_hash();
   IF v_obs <> v_vobs THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'M1 gate: observation state changed since the verification';
+  END IF;
+  -- Column bindings are not in the observation state (see above). Every
+  -- statement that changes one is DDL on the source table, and every DDL sets
+  -- the table's CREATE_TIME (whole seconds, truncated). The verifier checks the
+  -- bindings after the batch was opened, so a source table altered in or after
+  -- the second the batch was opened may no longer have the verified bindings.
+  -- No visible source table fails closed.
+  SELECT MAX(CREATE_TIME) INTO v_altered FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'm1_src';
+  IF v_altered IS NULL OR v_altered >= DATE_SUB(v_opened, INTERVAL MICROSECOND(v_opened) MICROSECOND) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'M1 gate: source table definition changed after the batch was opened';
   END IF;
 
   INSERT INTO m1_kb_pub.chunks (batch_id, chunk_no, doc_key, content, embedding)

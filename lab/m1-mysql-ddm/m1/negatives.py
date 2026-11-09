@@ -9,6 +9,10 @@ These scenarios test enforcement, not judgment: verification rows are
 written directly under the verifier account with whatever verdict the
 scenario needs. Whether a verdict is correct is the verifier's job, tested by
 the experiments.
+
+Some release scenarios also check what reached publication: a refusal must
+leave no published row and no release record for the batch, and a positive
+control must publish every quarantined row with one release record.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import hashlib
 import json
 import re
 import struct
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -74,6 +79,20 @@ def approved(builder: str = BR) -> tuple[int, dict, int, int]:
     return batch, seal, vid, aid
 
 
+def publication_state(batch: int) -> dict:
+    """What of a batch reached publication, and how many rows it has in quarantine."""
+    out = db.must(LAB, "root", f"SELECT (SELECT COUNT(*) FROM m1_kb_pub.chunks WHERE batch_id = {batch}), "
+                  f"(SELECT COUNT(*) FROM m1_ctl.releases WHERE batch_id = {batch}), "
+                  f"(SELECT COUNT(*) FROM m1_kb_q.chunks WHERE batch_id = {batch});", "publication state").out
+    published, releases, quarantined = (int(x) for x in out.split("\t"))
+    return dict(published_rows=published, release_records=releases, quarantine_rows=quarantined)
+
+
+def released(batch: int) -> tuple:
+    """A release attempt by the release account, and what of the batch reached publication."""
+    return gate.release(batch), publication_state(batch)
+
+
 def root_bypass_update(batch: int) -> None:
     """The administrator drops the guard trigger, edits content, restores the trigger."""
     db.must(LAB, "root", "\n".join([
@@ -109,7 +128,13 @@ def err(errno: int, text: str | None = None) -> tuple:
     return ("error", errno, text)
 
 
+def err_unpublished(errno: int, text: str) -> tuple:
+    """Refused, and nothing of the batch was published or recorded as released."""
+    return ("error-unpublished", errno, text)
+
+
 OK = ("ok",)
+PUBLISHED = ("ok-published",)  # released: every quarantined row published, one release record
 APPROVAL, FORGED, SEALED, BETWEEN, DIRECT, SEPARATION, STATE, IDENTITY, CONTROL, TCB = (
     "publish without valid approval", "forged verification", "modify a sealed artifact",
     "change between verification and publication", "direct write to published tables", "separation of duties",
@@ -446,11 +471,22 @@ def _g49():
                                    "SET GLOBAL activate_all_roles_on_login = OFF;")
 
 
-@scenario("G50", TCB, "Known gap: column moved to another existing policy after approval, then release", OK)
+# A column's masking policy binding is visible only through SHOW CREATE TABLE,
+# so it cannot enter the observation state. Every binding change is DDL on the
+# source table, which the release procedure detects by the table's CREATE_TIME.
+NOTE_POLICY = "ALTER TABLE m1_src.suppliers MODIFY compliance_note VARCHAR(300) NULL MASKING POLICY {};"
+SOURCE_ALTERED = "source table definition changed after the batch was opened"
+
+
+@scenario("G50", BETWEEN, "Masked column moved to another existing policy after approval, then release",
+          err_unpublished(1644, SOURCE_ALTERED))
 def _g50():
-    return _changed_after_approval(
-        "ALTER TABLE m1_src.suppliers MODIFY compliance_note VARCHAR(300) NULL MASKING POLICY m1_p_tax;",
-        "ALTER TABLE m1_src.suppliers MODIFY compliance_note VARCHAR(300) NULL MASKING POLICY m1_p_note;")
+    batch, _, _, _ = approved()
+    db.must(LAB, "root", NOTE_POLICY.format("m1_p_tax"), "change")
+    try:
+        return released(batch)
+    finally:
+        db.must(LAB, "root", NOTE_POLICY.format("m1_p_note"), "undo")
 
 
 @scenario("G51", STATE, "Grant changed while a batch is being built, then seal",
@@ -503,20 +539,55 @@ def _g55():
                                    "SET GLOBAL activate_mandatory_roles = ON;")
 
 
+def _note_moved_and_back() -> None:
+    """The administrator moves the masked column to another policy and back, in one session."""
+    db.must(LAB, "root", NOTE_POLICY.format("m1_p_tax") + "\n" + NOTE_POLICY.format("m1_p_note"), "move and back")
+
+
+@scenario("G56", CONTROL, "Positive control: masked column moved and moved back before the batch is opened, "
+          "then seal, PASS, APPROVE, release", PUBLISHED)
+def _g56():
+    _note_moved_and_back()
+    time.sleep(1.1)  # the release compares DDL times at one-second resolution
+    batch, _, _, _ = approved()
+    return released(batch)
+
+
+@scenario("G57", BETWEEN, "Masked column moved after the seal and moved back before the verification is "
+          "recorded, then PASS, APPROVE, release", err_unpublished(1644, SOURCE_ALTERED))
+def _g57():
+    batch, seal = sealed()
+    _note_moved_and_back()
+    # Recorded now, a verification would find the binding as declared again.
+    vid = gate.record_verification(batch, "PASS", seal["sealed_hash"], gate.observation_hash(), CODE, ZERO, ZERO)
+    gate.approve(vid, batch, "APPROVE", seal["sealed_hash"], "gate test approval")
+    return released(batch)
+
+
 # --------------------------------------------------------------------------
 # Runner
 # --------------------------------------------------------------------------
-def _judge(expect: tuple, outcome) -> tuple[bool, str]:
+def _judge(expect: tuple, outcome) -> tuple[bool, str, dict | None]:
+    """(passed, observed, publication state of the batch when the scenario reports one)."""
     if expect[0] == "value":
-        return outcome == expect[1], f"value {outcome!r}"
+        return outcome == expect[1], f"value {outcome!r}", None
     if isinstance(outcome, Exception):
-        return False, f"setup failed: {outcome}"
-    if expect[0] == "ok":
-        return outcome.ok, "ok" if outcome.ok else f"ERROR {outcome.errno} {outcome.error}"
-    _, errno, text = expect
+        return False, f"setup failed: {outcome}", None
+    state = None
+    if isinstance(outcome, tuple):  # (release result, publication state)
+        outcome, state = outcome
     seen = "ok" if outcome.ok else f"ERROR {outcome.errno} {outcome.error}"
-    passed = (not outcome.ok and outcome.errno == errno and (text is None or text in (outcome.error or "")))
-    return passed, seen
+    if expect[0] in ("ok", "ok-published"):
+        passed = outcome.ok
+    else:
+        _, errno, text = expect
+        passed = not outcome.ok and outcome.errno == errno and (text is None or text in (outcome.error or ""))
+    if expect[0] == "ok-published":
+        passed = passed and state is not None and state["release_records"] == 1 \
+            and state["published_rows"] == state["quarantine_rows"] > 0
+    elif expect[0] == "error-unpublished":
+        passed = passed and state is not None and state["release_records"] == 0 and state["published_rows"] == 0
+    return passed, seen, state
 
 
 def _observation_or_none() -> str | None:
@@ -526,24 +597,30 @@ def _observation_or_none() -> str | None:
         return None
 
 
-def run_all() -> dict:
+def run_all(only: list[str] | None = None) -> dict:
     cfg = config.load()
     baseline = _observation_or_none()
     results = []
     for s in SCENARIOS:
+        if only and s.sid not in only:
+            continue
         try:
             outcome = s.fn()
         except Exception as exc:  # a preparation step failed: the scenario fails, the run goes on
             outcome = exc
-        passed, seen = _judge(s.expect, outcome)
+        passed, seen, state = _judge(s.expect, outcome)
         results.append(dict(id=s.sid, category=s.category, title=s.title,
                             expected=" ".join(str(x) for x in s.expect if x is not None), observed=seen,
                             result="PASS" if passed else "FAIL"))
+        if state is not None:
+            results[-1]["publication"] = state
+        published = "" if state is None else (f"; published rows {state['published_rows']}, "
+                                              f"release records {state['release_records']}")
         print(f"{s.sid} {'PASS' if passed else 'FAIL'}  {s.title}\n      expected {results[-1]['expected']}"
-              f" | observed {seen}")
+              f" | observed {seen}{published}")
     restored = baseline is not None and _observation_or_none() == baseline
     report = dict(kind="gate-negatives", at=dt.datetime.now().isoformat(timespec="seconds"),
-                  passed=sum(r["result"] == "PASS" for r in results), total=len(results),
+                  only=only or None, passed=sum(r["result"] == "PASS" for r in results), total=len(results),
                   observation_state_restored=restored, scenarios=results)
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
     path = cfg.results_dir / f"negatives-{dt.datetime.now():%Y%m%d-%H%M%S}.json"
