@@ -83,7 +83,9 @@ Three hashes tie the flow together:
   source table and sets its `CREATE_TIME`, and the release procedure refuses
   a batch whose source tables were altered in or after the second it was
   opened. Together they cover the window from the verifier's check to the
-  release (gate negatives G50 and G57).
+  release procedure's own check (gate negatives G50 and G57). A DDL that
+  commits after that check and before the release commits is not refused
+  (`RESULTS.md`, Run 4, residual window).
 - **Code hash**: the pipeline sources plus the identity of the pinned
   embedding model. The verifier refuses to vouch for a batch built by other
   code.
