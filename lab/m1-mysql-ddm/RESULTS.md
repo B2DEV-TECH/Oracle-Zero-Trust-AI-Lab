@@ -411,7 +411,7 @@ added with it, behaves the same. This holds for the scenarios run, on one
 server version; it is not a proof that every binding change is caught. The
 check also leaves a residual window, described below under "Residual
 window": a DDL that commits after the release procedure's check and before
-the release commits is not refused.
+the release commits is not refused, and a demonstration confirmed it.
 
 ### The gap and the check that closes it
 
@@ -470,9 +470,22 @@ differ from the verified one. The same holds for the other release checks:
 each reads the state once, so a change committed between that read and the
 commit is not seen.
 
-- No scenario exercises it. G50, G56 and G57 run their steps one after the
-  other. The release procedure takes no lock meant to delay such a DDL, and
-  no test checked whether some lock does so anyway.
+- Observed in a demonstration, outside the negatives suite, after the
+  closing run (code of `8954e87`, fresh deployment, lab instance of the
+  second pair). A root session held a lock on `m1_kb_pub.chunks`
+  (`SELECT ... FOR UPDATE`, which locks the supremum), so `release_batch`
+  stopped at the copy's `INSERT`, after all of its checks
+  (`performance_schema.events_statements_current`). At that point the
+  release transaction held metadata locks on the gate's tables, on
+  `information_schema` and on data dictionary tables, and none on `m1_src`.
+  A root `ALTER TABLE m1_src.suppliers MODIFY compliance_note ... MASKING
+  POLICY m1_p_tax` committed in under 0.05 seconds while the release waited.
+  Once the lock was released, the release committed: 2 of 2 rows published
+  and 1 release record, with `compliance_note` bound to `m1_p_tax` instead of
+  the verified `m1_p_note`. Two runs, same outcome; the binding was restored
+  after each. The lock only widens the window so it can be hit on purpose.
+  The negatives (G50, G56 and G57 run their steps one after the other) do
+  not exercise it, and the counts above do not include this demonstration.
 - The interval lasts as long as the rest of the release procedure (copy,
   rehash, release record, commit). A binding changed in it leaves the
   published batch where a change made just after the release would, and no
